@@ -1,10 +1,11 @@
 {
   "name": "opengravity",
   "version": "1.0.0",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "type": "module",
   "scripts": {
     "dev": "NODE_OPTIONS=\"--dns-result-order=ipv4first\" tsx watch src/index.ts",
+    "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -15,11 +16,13 @@
     "@google/genai": "^1.44.0",
     "dotenv": "^17.3.1",
     "firebase-admin": "^13.7.0",
+    "firebase-functions": "^7.1.0",
     "grammy": "^1.41.1",
     "groq-sdk": "^0.37.0"
   },
   "devDependencies": {
     "@types/node": "^25.3.5",
+    "firebase-functions-test": "^3.4.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "undici": "^7.3.0"

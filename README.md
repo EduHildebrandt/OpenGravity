@@ -57,21 +57,41 @@ GOOGLE_APPLICATION_CREDENTIALS="./service-account.json"
 
 *Nota: Asegúrate de poner tu archivo `service-account.json` (descargado de Firebase) en la misma carpeta.*
 
-### 3. Encender el Motor
+### 3. Encender el Motor (Modo Desarrollo)
 
-Una vez que tengas todo lo anterior, abre una terminal (pantalla negra de comandos), ve a la carpeta del proyecto y ejecuta estos comandos:
+Si quieres probarlo localmente (con "Long Polling"), puedes correr el entorno de desarrollo. Ten en cuenta que en producción, usamos Firebase Cloud Functions.
 
-1. **Instalar piezas:** (Solo se hace la primera vez)
+1. **Instalar dependencias:**
    ```bash
    npm install
    ```
 
-2. **Encender el Bot:**
+2. **Compilar el código TypeScript:**
    ```bash
-   npm run dev
+   npm run build
    ```
 
-Verás un mensaje diciendo *"OpenGravity está en línea y esperando mensajes"*. ¡Listo! Ya puedes ir a Telegram y decirle "¡Hola!".
+> [!NOTE]
+> Para usar Telegram en modo **Webhook** con Firebase Functions, Telegram te pedirá que le digas en qué URL vive tu bot. Esto se hace enviando una petición GET a `https://api.telegram.org/bot<TU_TOKEN>/setWebhook?url=<URL_DE_FIREBASE>`.
+
+### 4. Desplegar en la Nube (Firebase Cloud Functions)
+
+OpenGravity está pre-configurado para subirse a la nube sin que tengas que gestionar servidores, cobrando cero (o casi cero) usando Firebase.
+
+1. **Inicia sesión en Firebase:**
+   ```bash
+   npx firebase-tools login
+   ```
+2. **Selecciona tu proyecto:**
+   ```bash
+   npx firebase-tools use --add
+   ```
+3. **Sube tu bot:**
+   ```bash
+   npm run build
+   npx firebase-tools deploy --only functions
+   ```
+Firebase te devolverá una URL. Deberás decirle a Telegram que envíe los mensajes a esa URL siguiendo el paso 3 (usando `setWebhook`). ¡Y listo, tu bot jamás se apagará!
 
 ---
 

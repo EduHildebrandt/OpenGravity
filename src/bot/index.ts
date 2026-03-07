@@ -8,7 +8,9 @@ let bot: Bot;
 /**
  * Initializes and configures the Telegram bot
  */
-export function initBot() {
+export function getBot(): Bot {
+  if (bot) return bot;
+
   bot = new Bot(config.TELEGRAM_BOT_TOKEN as string);
 
   // --- Security Middleware: Only allowed users can interact ---
@@ -62,12 +64,6 @@ export function initBot() {
   bot.catch((err) => {
     console.error(`[Bot Error Global]:`, err);
   });
-}
 
-/**
- * Starts the bot using long polling
- */
-export async function startBot() {
-  console.log('Starting Telegram bot...');
-  await bot.start();
+  return bot;
 }
