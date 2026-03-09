@@ -88,7 +88,7 @@ export function getBot(): Bot {
             model: "distil-whisper-large-v3-en", // Nota: Whisper funciona para múltiples idiomas, aunque el modelo diga -en suele entender o se usa whisper-large-v3 si da error
           });
 
-          userMessage = transcription.text;
+          userMessage = `[Nota de voz]: ${transcription.text.trim()}`;
           console.log(`[Voice] Transcribed Text: ${userMessage}`);
           
           if (!userMessage.trim()) {
@@ -100,7 +100,7 @@ export function getBot(): Bot {
             file: fs.createReadStream(tempFilePath),
             model: "whisper-large-v3", 
           });
-          userMessage = transcription.text;
+          userMessage = `[Nota de voz]: ${transcription.text.trim()}`;
         }
 
         // 3. Limpieza: Borrado del archivo temporal
