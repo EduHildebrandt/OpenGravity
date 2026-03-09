@@ -5,6 +5,7 @@ import { getBot } from './bot/index.js';
 import { onRequest } from 'firebase-functions/v2/https';
 import { webhookCallback } from 'grammy';
 
+// force deploy node modules
 // 1. Initial Validation
 try {
   validateConfig();
