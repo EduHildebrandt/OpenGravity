@@ -20,6 +20,7 @@ export const telegramWebhook = onRequest(
   {
     region: 'us-central1',
     timeoutSeconds: 300, // Important: LLMs often take longer than default 60s
+    invoker: 'public', // Allow unauthenticated invocations from Telegram
   },
-  webhookCallback(bot, 'https')
+  webhookCallback(bot, 'express') // Using 'express' adapter, because Firebase onRequest already parses req.body
 );
