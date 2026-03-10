@@ -1,133 +1,137 @@
+/**
+ * @file src/bot/index.ts
+ * @description Telegram bot setup and message handling for OpenGravity.
+ *
+ * Message flow:
+ *   Voice message → Groq Whisper (STT) → Agent Loop → Murf.ai (TTS) → Voice reply
+ *   Text message  →                       Agent Loop →                  Text reply
+ *
+ * Commands:
+ *   /start  — Greet the user and reset conversation history.
+ *   /clear  — Reset conversation history without a greeting.
+ */
+
 import { Bot, Context, InputFile } from 'grammy';
 import { config } from '../config.js';
 import { runAgentLoop } from '../agent/loop.js';
 import { clearMessages } from '../db/index.js';
 import { groq } from '../llm/generate.js';
-import fetch from 'node-fetch';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
 let bot: Bot;
 
+// ---------------------------------------------------------------------------
+// Bot factory
+// ---------------------------------------------------------------------------
+
 /**
- * Initializes and configures the Telegram bot
+ * Returns the singleton Bot instance, creating it on first call.
+ * This pattern avoids re-initialising middleware on every Firebase cold start.
  */
 export function getBot(): Bot {
   if (bot) return bot;
 
   bot = new Bot(config.TELEGRAM_BOT_TOKEN as string);
 
-  // --- Security Middleware: Only allowed users can interact ---
+  // ── Security middleware ───────────────────────────────────────────────────
+  // Silently drop messages from users not in the allowlist.
   bot.use(async (ctx: Context, next) => {
     const userId = ctx.from?.id.toString();
-    
     if (!userId || !config.TELEGRAM_ALLOWED_USER_IDS.includes(userId)) {
-      console.warn(`[Security] Unauthorized access attempt from User ID: ${userId}. Message: ${ctx.message?.text}`);
-      return; // Silently ignore unauthorized users
+      console.warn(`[Security] Blocked unauthorized user: ${userId}`);
+      return;
     }
-
     await next();
   });
 
-  // --- Command: /start ---
+  // ── /start command ────────────────────────────────────────────────────────
   bot.command('start', async (ctx) => {
     const userId = ctx.from!.id.toString();
-    await clearMessages(userId); // Reset conversation for the user
+    await clearMessages(userId);
     await ctx.reply('¡Hola! Soy OpenGravity, tu agente de IA personal. ¿En qué te puedo ayudar hoy?');
   });
 
-  // --- Command: /clear (reset memory) ---
+  // ── /clear command ────────────────────────────────────────────────────────
   bot.command('clear', async (ctx) => {
     const userId = ctx.from!.id.toString();
     await clearMessages(userId);
     await ctx.reply('Memoria borrada. Empecemos de nuevo.');
   });
 
-  // --- Main Message Handler ---
+  // ── Main message handler ──────────────────────────────────────────────────
   bot.on(['message:text', 'message:voice'], async (ctx) => {
     const userId = ctx.from.id.toString();
     let userMessage = '';
     let isVoiceMessage = false;
 
-    // Show typing status indicator
     await ctx.replyWithChatAction('typing');
 
     try {
+      // ── Voice message: transcribe with Groq Whisper ─────────────────────
       if (ctx.message.voice) {
         isVoiceMessage = true;
-        // Obtenemos información del archivo de voz de Telegram
+
+        // 1. Obtain the file download URL from Telegram
         const fileId = ctx.message.voice.file_id;
         const file = await ctx.api.getFile(fileId);
-        
-        if (!file.file_path) {
-          throw new Error('No se pudo obtener la ruta del archivo de voz.');
-        }
+        if (!file.file_path) throw new Error('Could not obtain voice file path from Telegram.');
 
-        // URL para descargar el archivo (formato .oga por defecto en Telegram)
         const fileUrl = `https://api.telegram.org/file/bot${config.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-        
-        await ctx.reply("He recibido tu nota de voz, procesando audio...");
-        
-        // 1. Descargamos el archivo temporalmente
-        const res = await fetch(fileUrl);
+        await ctx.reply('He recibido tu nota de voz, procesando audio…');
+
+        // 2. Download the OGG file and write it to a temp path
         const tempFilePath = path.join(os.tmpdir(), `voice_${fileId}.ogg`);
-        const fileStream = fs.createWriteStream(tempFilePath);
-        
-        await new Promise((resolve, reject) => {
-          if (!res.body) {
-             return reject(new Error("Response body is null"));
-          }
-          res.body.pipe(fileStream);
-          res.body.on("error", reject);
-          fileStream.on("finish", resolve);
-        });
+        const res = await fetch(fileUrl);
+        if (!res.ok) throw new Error(`Failed to download voice file: ${res.status}`);
 
-        // 2. Enviamos el archivo a Groq (Whisper)
+        // Native fetch returns a Web ReadableStream, so we use arrayBuffer() directly
+        const voiceBuffer = Buffer.from(await res.arrayBuffer());
+        fs.writeFileSync(tempFilePath, voiceBuffer);
+
+        // 3. Transcribe with Whisper (try fast model first, fall back to multilingual)
         try {
-          const transcription = await groq.audio.transcriptions.create({
+          const tx = await groq.audio.transcriptions.create({
             file: fs.createReadStream(tempFilePath),
-            model: "distil-whisper-large-v3-en", // Nota: Whisper funciona para múltiples idiomas, aunque el modelo diga -en suele entender o se usa whisper-large-v3 si da error
+            model: 'distil-whisper-large-v3-en',
           });
-
-          userMessage = `[Nota de voz]: ${transcription.text.trim()}`;
-          console.log(`[Voice] Transcribed Text: ${userMessage}`);
-          
-          if (!userMessage.trim()) {
-            throw new Error("Transated text is empty");
-          }
-        } catch (error) {
-           console.warn("Retrying with large-v3 for multilang");
-           const transcription = await groq.audio.transcriptions.create({
+          userMessage = `[Nota de voz]: ${tx.text.trim()}`;
+        } catch {
+          console.warn('[Bot] Falling back to whisper-large-v3 for multilingual transcription');
+          const tx = await groq.audio.transcriptions.create({
             file: fs.createReadStream(tempFilePath),
-            model: "whisper-large-v3", 
+            model: 'whisper-large-v3',
           });
-          userMessage = `[Nota de voz]: ${transcription.text.trim()}`;
+          userMessage = `[Nota de voz]: ${tx.text.trim()}`;
         }
 
-        // 3. Limpieza: Borrado del archivo temporal
-        if (fs.existsSync(tempFilePath)) {
-           fs.unlinkSync(tempFilePath);
-        }
+        // 4. Clean up temp file
+        if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
 
+        console.log(`[Bot] Transcription: ${userMessage}`);
+
+      // ── Text message ──────────────────────────────────────────────────────
       } else if (ctx.message.text) {
         userMessage = ctx.message.text;
       }
 
       if (!userMessage) return;
 
+      // ── Run agent loop ─────────────────────────────────────────────────────
       const response = await runAgentLoop(userId, userMessage);
-      
+
+      // ── Reply: voice → Murf TTS, text → Markdown ──────────────────────────
       if (isVoiceMessage && config.MURF_API_KEY) {
         await ctx.replyWithChatAction('record_voice');
         try {
-          // 1. Request TTS generation to Murf API
+          // 1. Generate audio via Murf.ai
           const murfRes = await fetch('https://api.murf.ai/v1/speech/generate', {
             method: 'POST',
             headers: {
               'api-key': config.MURF_API_KEY,
               'Content-Type': 'application/json',
-              'Accept': 'application/json'
+              'Accept': 'application/json',
             },
             body: JSON.stringify({
               voiceId: config.MURF_VOICE_ID,
@@ -137,46 +141,43 @@ export function getBot(): Bot {
               pitch: 0,
               sampleRate: 48000,
               format: 'MP3',
-              channelType: 'STEREO'
-            })
+              channelType: 'STEREO',
+            }),
           });
 
           if (!murfRes.ok) {
-            const errorText = await murfRes.text();
-            throw new Error(`Murf TTS error: ${murfRes.status} ${murfRes.statusText} - ${errorText}`);
+            const err = await murfRes.text();
+            throw new Error(`Murf TTS error: ${murfRes.status} ${murfRes.statusText} — ${err}`);
           }
 
-          const murfData = await murfRes.json() as { audioFile: string };
-          
-          // 2. Download the audio from the returned URL
-          const audioRes = await fetch(murfData.audioFile);
-          if (!audioRes.ok) {
-            throw new Error(`Error downloading Murf audio: ${audioRes.status}`);
-          }
-          const arrayBuffer = await audioRes.arrayBuffer();
-          const buffer = Buffer.from(arrayBuffer);
+          const { audioFile } = await murfRes.json() as { audioFile: string };
 
-          // 3. Send as voice note
+          // 2. Download the generated audio and send it as a voice note
+          const audioRes = await fetch(audioFile);
+          if (!audioRes.ok) throw new Error(`Failed to download Murf audio: ${audioRes.status}`);
+
+          const buffer = Buffer.from(await audioRes.arrayBuffer());
           await ctx.replyWithVoice(new InputFile(buffer, 'response.mp3'));
+
         } catch (ttsError) {
-          console.error('[Bot] TTS Error:', ttsError);
-          // Fallback to text if TTS fails
+          // Graceful fallback: send the text response if TTS fails
+          console.error('[Bot] TTS error, falling back to text:', ttsError);
           await ctx.reply(response, { parse_mode: 'Markdown' });
         }
+
       } else {
+        // Plain text response (or TTS not configured)
         await ctx.reply(response, { parse_mode: 'Markdown' });
       }
 
     } catch (error: any) {
-      console.error('[Bot] Message Error:', error);
-      await ctx.reply('Lo siento, ocurrió un error procesando tu mensaje.');
+      console.error('[Bot] Unhandled message error:', error);
+      await ctx.reply('Lo siento, ocurrió un error al procesar tu mensaje. Intentá de nuevo.');
     }
   });
 
-  // Error handling global hook
-  bot.catch((err) => {
-    console.error(`[Bot Error Global]:`, err);
-  });
+  // ── Global error handler ──────────────────────────────────────────────────
+  bot.catch((err) => console.error('[Bot] Global error:', err));
 
   return bot;
 }

@@ -1,15 +1,36 @@
+/**
+ * @file src/agent/loop.ts
+ * @description Core agent loop for OpenGravity.
+ *
+ * Flow per user message:
+ *   1. Save the user message to Firestore.
+ *   2. Fetch the conversation history.
+ *   3. Call the LLM.
+ *   4. If the LLM requests a tool → execute it, save the result, go to 2.
+ *   5. If the LLM returns a final text answer → save it and return it.
+ *
+ * The loop is capped at MAX_ITERATIONS to prevent runaway tool chains.
+ */
+
 import { generateCompletion } from '../llm/generate.js';
 import { getMessagesByUser, saveMessage } from '../db/index.js';
 import { tools } from './tools.js';
 
+/** Maximum number of LLM ↔ tool round-trips before giving up. */
 const MAX_ITERATIONS = 5;
 
 /**
- * Main agent loop. Takes a user message, talks to the LLM, executes 
- * tools if necessary, and loops back until the LLM decides to stop.
+ * Run the agent loop for a single user message.
+ *
+ * @param userId  Telegram user ID (used as the Firestore document key).
+ * @param userMessage  Plain-text content of the user's message.
+ * @returns  The final text response to send back to the user.
  */
-export async function runAgentLoop(userId: string, userMessage: string): Promise<string> {
-  // 1. Save user msg to the database
+export async function runAgentLoop(
+  userId: string,
+  userMessage: string
+): Promise<string> {
+  // Persist the incoming user message
   await saveMessage({
     user_id: userId,
     role: 'user',
@@ -19,75 +40,73 @@ export async function runAgentLoop(userId: string, userMessage: string): Promise
     tool_call_id: null,
   });
 
-  let iterations = 0;
+  for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
+    console.log(`[Agent] Iteration ${iteration}/${MAX_ITERATIONS} for user ${userId}`);
 
-  while (iterations < MAX_ITERATIONS) {
-    iterations++;
-    console.log(`[Agent Loop] Iteration ${iterations} for user ${userId}`);
-
-    // 2. Fetch history
     const history = await getMessagesByUser(userId);
 
-    // 3. Call the unified LLM adapter
+    let content: string | null;
+    let tool_calls: { id: string; name: string; args: any }[] | null;
+
     try {
-      const { content, tool_calls } = await generateCompletion(userId, history, tools);
+      ({ content, tool_calls } = await generateCompletion(userId, history, tools));
+    } catch (error: any) {
+      console.error('[Agent] LLM error:', error);
+      return 'Ocurrió un error al contactar al modelo de lenguaje. Revisá tus variables de entorno y API keys.';
+    }
 
-      // 4. Save LLM response to history
-      await saveMessage({
-        user_id: userId,
-        role: 'assistant',
-        content: content || '',
-        name: null,
-        tool_calls: tool_calls ? JSON.stringify(tool_calls) : null,
-        tool_call_id: null,
-      });
+    // Persist the assistant turn (may be a tool-call turn with no text content)
+    await saveMessage({
+      user_id: userId,
+      role: 'assistant',
+      content: content ?? '',
+      name: null,
+      tool_calls: tool_calls ? JSON.stringify(tool_calls) : null,
+      tool_call_id: null,
+    });
 
-      // 5. Check if LLM wanted to call tools
-      if (tool_calls && tool_calls.length > 0) {
-        for (const toolCall of tool_calls) {
-          const functionName = toolCall.name;
-          const argsStr = typeof toolCall.args === 'string' ? toolCall.args : JSON.stringify(toolCall.args);
-          const args = JSON.parse(argsStr || '{}');
+    // ── Tool execution ────────────────────────────────────────────────────────
+    if (tool_calls && tool_calls.length > 0) {
+      for (const call of tool_calls) {
+        console.log(`[Agent] Executing tool: ${call.name}`);
 
-          console.log(`[Agent Loop] Executing tool: ${functionName}`);
+        const tool = tools[call.name];
+        let toolResult: string;
 
-          const tool = tools[functionName];
-          let toolResult = '';
-
-          if (tool) {
-            try {
-              toolResult = await tool.execute(args);
-            } catch (err: any) {
-              toolResult = `Error executing tool: ${err.message}`;
-              console.error(`[Agent Loop] Tool error:`, err);
-            }
-          } else {
-            toolResult = `Error: Tool ${functionName} not found.`;
+        if (tool) {
+          try {
+            const args =
+              typeof call.args === 'string'
+                ? JSON.parse(call.args || '{}')
+                : call.args ?? {};
+            toolResult = await tool.execute(args);
+          } catch (err: any) {
+            toolResult = `Error executing tool "${call.name}": ${err.message}`;
+            console.error('[Agent] Tool execution error:', err);
           }
-
-          // 6. Save the tool result to history
-          await saveMessage({
-            user_id: userId,
-            role: 'tool',
-            content: typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult),
-            name: functionName,
-            tool_calls: null,
-            tool_call_id: toolCall.id,
-          });
+        } else {
+          toolResult = `Error: Tool "${call.name}" is not registered.`;
+          console.warn(`[Agent] Unknown tool requested: ${call.name}`);
         }
-        
-        // Loop again because we generated a tool response
-        continue; 
+
+        // Save the tool result so the LLM can read it in the next iteration
+        await saveMessage({
+          user_id: userId,
+          role: 'tool',
+          content: toolResult,
+          name: call.name,
+          tool_calls: null,
+          tool_call_id: call.id,
+        });
       }
 
-      // 7. If no tool calls, this is the final answer!
-      return content || 'Sin respuesta del modelo.';
-
-    } catch (error: any) {
-      console.error('[Agent Loop] LLM API Error:', error);
-      return "Ocurrió un error al procesar tu solicitud con el modelo de lenguaje (revisa tus variables de entorno y API keys).";
+      // Loop back so the LLM can process the tool results
+      continue;
     }
+
+    // ── Final answer ──────────────────────────────────────────────────────────
+    return content || 'Sin respuesta del modelo.';
   }
 
-  return "Se alcanzó el límite máximo de pensamiento del agente (loop limit). Por favor, formula tu pregunta de otra manera.";
+  return 'Se alcanzó el límite máximo de iteraciones del agente. Intentá reformular tu pregunta.';
 }
