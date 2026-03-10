@@ -14,6 +14,8 @@ export const config = {
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
   OPENROUTER_MODEL: process.env.OPENROUTER_MODEL || 'openrouter/free',
+  ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY || 'sk_7ff8798976f92c0d7129850a7ee92a7a9b12da2e9eb8a5b6',
+  ELEVENLABS_VOICE_ID: process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL',
 };
 
 export function validateConfig() {

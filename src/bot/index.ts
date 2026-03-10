@@ -1,4 +1,4 @@
-import { Bot, Context } from 'grammy';
+import { Bot, Context, InputFile } from 'grammy';
 import { config } from '../config.js';
 import { runAgentLoop } from '../agent/loop.js';
 import { clearMessages } from '../db/index.js';
@@ -48,12 +48,14 @@ export function getBot(): Bot {
   bot.on(['message:text', 'message:voice'], async (ctx) => {
     const userId = ctx.from.id.toString();
     let userMessage = '';
+    let isVoiceMessage = false;
 
     // Show typing status indicator
     await ctx.replyWithChatAction('typing');
 
     try {
       if (ctx.message.voice) {
+        isVoiceMessage = true;
         // Obtenemos información del archivo de voz de Telegram
         const fileId = ctx.message.voice.file_id;
         const file = await ctx.api.getFile(fileId);
@@ -116,9 +118,41 @@ export function getBot(): Bot {
 
       const response = await runAgentLoop(userId, userMessage);
       
-      // Attempt to format generic markdown to Telegram's HTML if possible, 
-      // or just reply directly. For simplicity we will reply directly using standard text.
-      await ctx.reply(response, { parse_mode: 'Markdown' });
+      if (isVoiceMessage && config.ELEVENLABS_API_KEY) {
+        await ctx.replyWithChatAction('record_voice');
+        try {
+          const ttsUrl = `https://api.elevenlabs.io/v1/text-to-speech/${config.ELEVENLABS_VOICE_ID}?output_format=mp3_44100_128`;
+          const ttsRes = await fetch(ttsUrl, {
+            method: 'POST',
+            headers: {
+              'Accept': 'audio/mpeg',
+              'xi-api-key': config.ELEVENLABS_API_KEY,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              text: response,
+              model_id: 'eleven_multilingual_v2',
+              voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+            })
+          });
+
+          if (!ttsRes.ok) {
+            const errorText = await ttsRes.text();
+            throw new Error(`ElevenLabs API error: ${ttsRes.status} ${ttsRes.statusText} - ${errorText}`);
+          }
+
+          const arrayBuffer = await ttsRes.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          
+          await ctx.replyWithVoice(new InputFile(buffer, 'response.mp3'));
+        } catch (ttsError) {
+          console.error('[Bot] TTS Error:', ttsError);
+          // Fallback to text if TTS fails
+          await ctx.reply(response, { parse_mode: 'Markdown' });
+        }
+      } else {
+        await ctx.reply(response, { parse_mode: 'Markdown' });
+      }
 
     } catch (error: any) {
       console.error('[Bot] Message Error:', error);
