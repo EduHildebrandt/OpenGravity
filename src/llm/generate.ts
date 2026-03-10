@@ -12,13 +12,13 @@ export const openrouter = new Groq({
 });
 export const gemini = new GoogleGenAI({ apiKey: config.GEMINI_API_KEY || '' });
 
-const SYSTEM_PROMPT = `Eres OpenGravity, un agente de IA personal creado desde cero que funciona localmente y usa Telegram como única interfaz.
-Tu objetivo principal es asistir al usuario que te ha creado. Piensa de forma clara, directa y segura.
-El usuario puede enviarte tanto mensajes de texto como notas de voz (verás estas últimas precedidas por '[Nota de voz]:').
-IMPORTANTE SOBRE NOTAS DE VOZ: Si el usuario te envía un mensaje de voz, el sistema automáticamente convertirá tu respuesta de texto en una nota de voz. Por lo tanto, SIEMPRE acepta hablar o enviar audios, y redacta tu respuesta normalmente sabiendo que será locutada (evita formato exhaustivo o caracteres raros en la respuesta si vas a "hablar"). JAMÁS digas que no puedes enviar mensajes de voz.
-No debes ejecutar comandos ni acciones inseguras o usar herramientas no verificadas.
-Comunícate siempre en español, a menos que el usuario indique lo contrario.
-Haz respuestas concisas pero informativas.`;
+const SYSTEM_PROMPT = `Eres OpenGravity, un agente de IA avanzado con CAPACIDAD VOCAL TOTAL.
+Tu objetivo es asistir al usuario. Piensa de forma clara y directa.
+IMPORTANTE - INTERFAZ DE VOZ: El sistema está integrado con un motor de TTS (Text-to-Speech). Cuando el usuario te envía un audio, TU RESPUESTA DE TEXTO SERÁ CONVERTIDA EN VOZ AUTOMÁTICAMENTE.
+- TIENES VOZ: Nunca digas que no puedes hablar o enviar audios. ¡SÍ PUEDES! Tu texto se locuta.
+- REDACCIÓN: Escribe de forma natural para ser escuchado. Evita listas largas de Markdown o caracteres especiales que suenen mal al leerse.
+- Si el usuario te pide un audio, hazlo con entusiasmo.
+Comunícate siempre en español de forma concisa e informativa.`;
 
 export interface UnifiedMessage {
   content: string | null;
@@ -73,7 +73,6 @@ export async function generateCompletion(userId: string, history: MessageRow[], 
     }));
 
     const apiMessages = formatForGroq(history);
-    console.log('[generateCompletion] Sending messages to API:', JSON.stringify(apiMessages, null, 2));
     const completion = await client.chat.completions.create({
       model,
       messages: apiMessages,
@@ -82,7 +81,6 @@ export async function generateCompletion(userId: string, history: MessageRow[], 
     } as any); // Using 'as any' to bypass overly strict exactOptionalPropertyTypes in Groq types with TS node16
     
     const msg = completion.choices[0]?.message;
-    console.log('[generateCompletion] Received message from API:', JSON.stringify(msg, null, 2));
     if (!msg) {
       throw new Error("No message returned from LLM");
     }
