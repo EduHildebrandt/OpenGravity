@@ -118,32 +118,45 @@ export function getBot(): Bot {
 
       const response = await runAgentLoop(userId, userMessage);
       
-      if (isVoiceMessage && config.OPENAI_API_KEY) {
+      if (isVoiceMessage && config.MURF_API_KEY) {
         await ctx.replyWithChatAction('record_voice');
         try {
-          const ttsUrl = 'https://api.openai.com/v1/audio/speech';
-          const ttsRes = await fetch(ttsUrl, {
+          // 1. Request TTS generation to Murf API
+          const murfRes = await fetch('https://api.murf.ai/v1/speech/generate', {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${config.OPENAI_API_KEY}`,
-              'Content-Type': 'application/json'
+              'api-key': config.MURF_API_KEY,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
             },
             body: JSON.stringify({
-              model: 'tts-1',
-              input: response,
-              voice: config.OPENAI_VOICE_ID,
-              response_format: 'mp3'
+              voiceId: config.MURF_VOICE_ID,
+              style: 'Conversational',
+              text: response,
+              rate: 0,
+              pitch: 0,
+              sampleRate: 48000,
+              format: 'MP3',
+              channelType: 'STEREO'
             })
           });
 
-          if (!ttsRes.ok) {
-            const errorText = await ttsRes.text();
-            throw new Error(`OpenAI TTS error: ${ttsRes.status} ${ttsRes.statusText} - ${errorText}`);
+          if (!murfRes.ok) {
+            const errorText = await murfRes.text();
+            throw new Error(`Murf TTS error: ${murfRes.status} ${murfRes.statusText} - ${errorText}`);
           }
 
-          const arrayBuffer = await ttsRes.arrayBuffer();
-          const buffer = Buffer.from(arrayBuffer);
+          const murfData = await murfRes.json() as { audioFile: string };
           
+          // 2. Download the audio from the returned URL
+          const audioRes = await fetch(murfData.audioFile);
+          if (!audioRes.ok) {
+            throw new Error(`Error downloading Murf audio: ${audioRes.status}`);
+          }
+          const arrayBuffer = await audioRes.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+
+          // 3. Send as voice note
           await ctx.replyWithVoice(new InputFile(buffer, 'response.mp3'));
         } catch (ttsError) {
           console.error('[Bot] TTS Error:', ttsError);

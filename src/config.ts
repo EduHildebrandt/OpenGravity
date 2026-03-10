@@ -16,6 +16,8 @@ export const config = {
   OPENROUTER_MODEL: process.env.OPENROUTER_MODEL || 'openrouter/free',
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_VOICE_ID: process.env.OPENAI_VOICE_ID || 'nova', // Voices: alloy, echo, fable, onyx, nova, shimmer
+  MURF_API_KEY: process.env.MURF_API_KEY,
+  MURF_VOICE_ID: process.env.MURF_VOICE_ID || 'es-MX-alejandro', // es-MX-alejandro, es-ES-enrique, es-MX-carlos
 };
 
 export function validateConfig() {
