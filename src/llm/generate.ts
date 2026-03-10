@@ -73,6 +73,7 @@ export async function generateCompletion(userId: string, history: MessageRow[], 
     }));
 
     const apiMessages = formatForGroq(history);
+    console.log('[generateCompletion] Sending messages to API:', JSON.stringify(apiMessages, null, 2));
     const completion = await client.chat.completions.create({
       model,
       messages: apiMessages,
@@ -81,6 +82,7 @@ export async function generateCompletion(userId: string, history: MessageRow[], 
     } as any); // Using 'as any' to bypass overly strict exactOptionalPropertyTypes in Groq types with TS node16
     
     const msg = completion.choices[0]?.message;
+    console.log('[generateCompletion] Received message from API:', JSON.stringify(msg, null, 2));
     if (!msg) {
       throw new Error("No message returned from LLM");
     }
