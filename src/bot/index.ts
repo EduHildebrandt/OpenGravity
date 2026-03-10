@@ -118,27 +118,27 @@ export function getBot(): Bot {
 
       const response = await runAgentLoop(userId, userMessage);
       
-      if (isVoiceMessage && config.ELEVENLABS_API_KEY) {
+      if (isVoiceMessage && config.OPENAI_API_KEY) {
         await ctx.replyWithChatAction('record_voice');
         try {
-          const ttsUrl = `https://api.elevenlabs.io/v1/text-to-speech/${config.ELEVENLABS_VOICE_ID}?output_format=mp3_44100_128`;
+          const ttsUrl = 'https://api.openai.com/v1/audio/speech';
           const ttsRes = await fetch(ttsUrl, {
             method: 'POST',
             headers: {
-              'Accept': 'audio/mpeg',
-              'xi-api-key': config.ELEVENLABS_API_KEY,
+              'Authorization': `Bearer ${config.OPENAI_API_KEY}`,
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-              text: response,
-              model_id: 'eleven_multilingual_v2',
-              voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+              model: 'tts-1',
+              input: response,
+              voice: config.OPENAI_VOICE_ID,
+              response_format: 'mp3'
             })
           });
 
           if (!ttsRes.ok) {
             const errorText = await ttsRes.text();
-            throw new Error(`ElevenLabs API error: ${ttsRes.status} ${ttsRes.statusText} - ${errorText}`);
+            throw new Error(`OpenAI TTS error: ${ttsRes.status} ${ttsRes.statusText} - ${errorText}`);
           }
 
           const arrayBuffer = await ttsRes.arrayBuffer();
