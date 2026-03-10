@@ -46,7 +46,7 @@ export async function getMessagesByUser(userId: string, limitCount = 50): Promis
   const messagesRef = db.collection('users').doc(userId).collection('messages');
   
   const snapshot = await messagesRef
-    .orderBy('timestamp', 'asc')
+    .orderBy('timestamp', 'desc')
     .limit(limitCount)
     .get();
 
@@ -54,7 +54,9 @@ export async function getMessagesByUser(userId: string, limitCount = 50): Promis
     return [];
   }
 
-  return snapshot.docs.map(doc => {
+  const docs = snapshot.docs.slice().reverse();
+
+  return docs.map(doc => {
     const data = doc.data();
     return {
       id: doc.id,
